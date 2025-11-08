@@ -8,8 +8,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 app = FastAPI(title="Flutter AI Backend")
 
-MICHU_CONTEXT = """
-Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
+MICHU_CONTEXT = """Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
 
 Welcome to Michu, the digital lending platform that understands your business needs and supports your growth. Whether you’re a small vendor, an aspiring entrepreneur, or an established MSME, Michu is here to help you thrive. Say goodbye to collateral requirements and long approval processes with Michu, your financing is just a few taps away.
 
@@ -95,8 +94,7 @@ Repaying your loan on time increases your eligible loan amount for future applic
 
 Privacy Policy
 
-Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
-"""
+Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers."""  # (your full context here)
 
 class ChatRequest(BaseModel):
     messages: list  # [{"role": "user", "content": "Hello"}]
@@ -109,17 +107,16 @@ def chat_endpoint(request: ChatRequest):
         "Content-Type": "application/json"
     }
 
-    # Inject Michu context as system prompt
-system_context = {
-    "role": "system",
-    "content": (
-        "You are an assistant that knows everything about the Michu digital lending platform. "
-        "Answer clearly and concisely in plain text only. Do not use emojis, tables,markdown, or symbols. "
-        "Make it short and easy to read.\n\n"
-        f"Context:\n{MICHU_CONTEXT}"
-    )
-}
-
+    # Inject Michu context as system prompt (must be inside the function)
+    system_context = {
+        "role": "system",
+        "content": (
+            "You are an assistant that knows everything about the Michu digital lending platform. "
+            "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
+            "Make it short and easy to read.\n\n"
+            f"Context:\n{MICHU_CONTEXT}"
+        )
+    }
 
     # Prepend system context
     messages_with_context = [system_context] + request.messages
