@@ -110,10 +110,16 @@ def chat_endpoint(request: ChatRequest):
     }
 
     # Inject Michu context as system prompt
-    system_context = {
-        "role": "system",
-        "content": f"You are an assistant that knows everything about the Michu digital lending platform.\n\nContext:\n{MICHU_CONTEXT}"
-    }
+system_context = {
+    "role": "system",
+    "content": (
+        "You are an assistant that knows everything about the Michu digital lending platform. "
+        "Answer clearly and concisely in plain text only. Do not use emojis, tables,markdown, or symbols. "
+        "Make it short and easy to read.\n\n"
+        f"Context:\n{MICHU_CONTEXT}"
+    )
+}
+
 
     # Prepend system context
     messages_with_context = [system_context] + request.messages
