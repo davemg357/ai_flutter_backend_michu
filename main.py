@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os, requests
 from dotenv import load_dotenv
@@ -7,6 +8,15 @@ load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 app = FastAPI(title="Flutter AI Backend")
+
+# --- CORS Middleware for Flutter Web ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Replace "*" with your frontend URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 MICHU_CONTEXT = """Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
 
@@ -94,7 +104,8 @@ Repaying your loan on time increases your eligible loan amount for future applic
 
 Privacy Policy
 
-Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers."""  # (your full context here)
+Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
+"""
 
 class ChatRequest(BaseModel):
     messages: list  # [{"role": "user", "content": "Hello"}]
@@ -107,7 +118,7 @@ def chat_endpoint(request: ChatRequest):
         "Content-Type": "application/json"
     }
 
-    # Inject Michu context as system prompt (must be inside the function)
+    # Inject Michu context as system prompt
     system_context = {
         "role": "system",
         "content": (
@@ -118,7 +129,7 @@ def chat_endpoint(request: ChatRequest):
         )
     }
 
-    # Prepend system context
+    # Prepend system context to messages
     messages_with_context = [system_context] + request.messages
 
     payload = {
