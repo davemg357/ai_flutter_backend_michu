@@ -237,7 +237,7 @@ def chat_endpoint(request: ChatRequest):
 
     web_context = gather_web_context(combined_urls) if combined_urls else ""
 
-system_content = (
+    system_content = (
     "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
     "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
     "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
@@ -248,7 +248,7 @@ system_content = (
     "Use extracts from external websites (if available) to provide updated information.\n"
     "If the user query is not covered in any of the above contexts, answer using your general AI knowledge, "
     "while maintaining accuracy and clarity relevant to Ethiopian banking and fintech.\n"
-)
+    )
 
     if web_context:
         system_content += "Augmented with short extracts from external websites (for factual freshness):\n" + web_context + "\n\n"
