@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os, requests
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -18,175 +19,112 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MICHU_CONTEXT = """Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
+# -------------------------------
+# STATIC MICHU CONTEXT
+# -------------------------------
+MICHU_CONTEXT = """
+Michu is a digital lending platform owned by Cooperative Bank of Oromia.
+It provides collateral-free loans to MSMEs, youth, women, and informal businesses.
 
-Welcome to Michu, the digital lending platform that understands your business needs and supports your growth. Whether you’re a small vendor, an aspiring entrepreneur, or an established MSME, Michu is here to help you thrive. Say goodbye to collateral requirements and long approval processes with Michu, your financing is just a few taps away.
+Main Products:
+- Michu Guyyaa: 2,000 – 15,000 ETB, 7 days, 12% facility fee.
+- Michu Kiyya (Informal): 3,000 – 5,000 ETB, 14 days, 3.75% interest.
+- Michu Kiyya (Formal): 10,000 – 30,000 ETB, 30 days, 3.75% interest.
+- Michu Wabi: 50,000 – 300,000 ETB, 30–90 days, 6.5%–8% interest.
 
-Loans Tailored for Your Business
-
-With Michu, we believe in making financing accessible to all. That’s why we’ve designed three unique products to meet the diverse needs of Ethiopian businesses:
-
-Michu Wabi
-
-This product is ideal for medium-sized enterprises looking for significant capital. With loan amounts ranging from 50,000 ETB to 300,000 ETB, Michu Wabi provides the financial boost you need to expand operations, purchase inventory, or upgrade equipment.
-
-Michu Guyyaa
-
-Tailored for small businesses, including those operating informally like street vendors, Michu Guyyaa offers loans between 2,000 ETB and 15,000 ETB. No business license? No problem. We focus on your potential, not paperwork.
-
-Michu Kiyya
-
-Designed to empower women entrepreneurs, Michu Kiyya provides loans up to 30,000 ETB with fewer service charges and minimal hassle. It’s our way of supporting women who are making a difference in their communities.
-
-How Michu Works
-
-Michu is entirely digital, making it easy and convenient for you to access the funds you need. Here’s how it works:
-
-Install the app, available on major platforms.
-
-Sign Up: Create your profile, link your bank account, and provide some basic details about your business.
-
-Get Your Loan: Apply for the amount you need and receive approval instantly. Funds are transferred directly to your account, ready for use.
-
-Achieve More: As you repay your loans on time, Michu’s AI-powered system increases your eligible loan amount, helping your business grow with every step.
-
-Transforming Lives, One at a time
-
-With over 2.3 million MSMEs already supported, Michu is making a tangible impact across Ethiopia.
-
-“When my business faced cash flow issues, Michu helped me cover my rent and keep the doors open.”
-“Thanks to Michu, I expanded my street vending business without worrying about collateral.”
-“As a woman in business, I found Michu Kiyya’s low charges and easy process to be a game-changer.”
-
-Pricing
-Michu Guyyaa
-
-Credit Limit: 2,000 – 15,000 ETB
-
-Credit Period: 7 Days
-
-Access/Facility Fee: 12%
-
-Michu Kiyya Informal
-
-Credit Limit: 3,000 – 5,000 ETB
-
-Credit Period: 14 Days
-
-Interest Rate: 3.75%
-
-Michu Kiyya Formal
-
-Credit Limit: 10,000 – 30,000 ETB
-
-Credit Period: 30 Days
-
-Interest Rate: 3.75%
-
-Michu Wabi
-
-Credit Limit: 50,000 – 300,000 ETB
-
-Credit Period: 30 to 90 Days
-
-Interest Rate: 6.5% to 8% per month
-
-Frequently Asked Questions
-
-Do I need a business license to apply?
-Michu Guyyaa is designed for informal businesses, so a license is not required.
-
-How quickly can I get my loan?
-Approval is instant, and funds are deposited directly into your bank account.
-
-What happens if I repay on time?
-Repaying your loan on time increases your eligible loan amount for future applications, thanks to our AI-based system.
-
-Privacy Policy
-
-Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
+Michu requires no collateral and provides instant approval through the app.
 """
-COOPBANK_CONTEXT = """
+
+# -------------------------------
+# MULTIPLE COOPBANK URLS
+# -------------------------------
+COOPBANK_URLS = [
+    "https://coopbankoromia.com.et",
+    "https://coopbankoromia.com.et/about/",
+    "https://coopbankoromia.com.et/coopbank-alhuda/",
+    "https://coopbankoromia.com.et/deposit-products/ordinary-saving-account/",
+    "https://diasporabanking.coopbankoromiasc.com/",
+    "https://coopbankoromia.com.et/coopay-ebirr/",
+    "https://coopbankoromia.com.et/e-banking-2-3/#card-banking",
+]
+
+# -------------------------------
+# SCRAPER FUNCTION
+# -------------------------------
+def fetch_multiple_urls(urls: list) -> str:
+    combined_text = ""
+
+    for url in urls:
+        try:
+            print(f"Scraping: {url}")
+            response = requests.get(url, timeout=10)
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Remove useless elements
+            for tag in soup(["script", "style", "noscript", "header", "footer", "svg"]):
+                tag.decompose()
+
+            # Extract visible text
+            text = soup.get_text(separator=" ")
+            cleaned = " ".join(text.split())  # Normalize spacing
+
+            combined_text += cleaned + "\n\n"
+
+        except Exception:
+            combined_text += ""
+
+    return combined_text.strip()
+
+
+# Fetch Coopbank website content ONCE (you can later add caching)
+dynamic_coopbank_text = fetch_multiple_urls(COOPBANK_URLS)
+
+COOPBANK_CONTEXT = f"""
 Cooperative Bank of Oromia Banking Solutions
 
-Digital Offerings:
-COOPay-Ebirr
-Card Banking
-CoopApp
-CoopApp Alhuda
-Farmpass
-Coopbank SACCO-Link
+Products and Services:
+Digital banking, CoopApp, Ebirr, card banking, agri-finance, MSME finance,
+loans, advances, deposits, trade services, and cooperative relations.
 
-Deposit Products:
-Demand Deposit
-Saving Deposit
-Fixed Time Deposit
-
-Trade Service:
-Import
-Export
-Money Transfers
-Guarantee (Foreign)
-
-Agri and Cooperative Relations:
-Cooperatives Saving Products:
-- Cooperative Saving
-- Requirements
-
-Cooperative Financing:
-- Working Capital Loan
-- Agriculture Mechanization
-- Agriculture Processing
-- Export Financing Facilities
-- Others
-
-Cooperatives Capacity Building and Advisory:
-- Capacity Building and Advisory Services
-- Intended Impact of Coopbank’s Advisory Services
-- Stakeholders to Partner with Coopbank
-
-Loan and Advances:
-- Collateralized Commodity Financing (CCF)
-- Overdraft Facility
-- Merchandise Loan Facility
-- Pre-shipment Export Credit Facility
-- Letter of Guarantee Facility
-- Term Loan
-- Agricultural Term Loan
-- Motor Vehicle Loan
-- Revolving Export Credit Facility
-
-Other Financings:
-- Partial Financing for Acquired and Foreclosed Collateral
-- Equipment/machinery Lease Financing
-- Import Letter of Credit Settlement Loan
+Live Website Data:
+{dynamic_coopbank_text}
 """
+
+
+# -------------------------------
+# REQUEST BODY MODEL
+# -------------------------------
 class ChatRequest(BaseModel):
     messages: list  # [{"role": "user", "content": "Hello"}]
 
+
+# -------------------------------
+# CHAT ENDPOINT
+# -------------------------------
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
+
     url = "https://router.huggingface.co/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    # Inject Michu context as system prompt
+    # SYSTEM PROMPT WITH CONTEXTS
     system_context = {
         "role": "system",
         "content": (
-            "You are an assistant that knows everything about both the Michu Digital Lending Platform "
-            "and the Cooperative Bank of Oromia banking solutions. "
-            "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
-            "Make responses short and easy to read.\n\n"
-            "Context:\n"
+            "You are an AI assistant that knows everything about "
+            "1) Michu Digital Lending Platform and "
+            "2) Cooperative Bank of Oromia. "
+            "Use both the static context and the live scraped website content. "
+            "Answer clearly in plain text only. No emojis, markdown, or tables.\n\n"
             f"{MICHU_CONTEXT}\n\n"
             f"{COOPBANK_CONTEXT}"
         )
     }
 
-    # Prepend system context to messages
+    # PREPEND SYSTEM CONTEXT
     messages_with_context = [system_context] + request.messages
 
     payload = {
@@ -194,10 +132,14 @@ def chat_endpoint(request: ChatRequest):
         "messages": messages_with_context
     }
 
+    # SEND TO HF ROUTER
     try:
         response = requests.post(url, json=payload, headers=headers)
+
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
+
         return response.json()
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
