@@ -1,4 +1,6 @@
-fastapi[all]
-uvicorn[standard]
+fastapi
+uvicorn
 requests
 python-dotenv
+beautifulsoup4
+cachetools
