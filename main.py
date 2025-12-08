@@ -1,23 +1,37 @@
+# main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os, requests
+import os
+import requests
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+import time
+from cachetools import TTLCache, cached
+from typing import List, Optional
+from urllib.parse import urlparse
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-app = FastAPI(title="Flutter AI Backend")
+# Default external sources (feel free to change to coopbank/gamtaa domains)
+EXTRA_SOURCES = os.getenv(
+    "EXTRA_SOURCES",
+    "https://coopbankoromia.com.et/,https://coopbankoromia.com.et/our-digital-offerings/,https://coopbankoromia.com.et/coopbank-smart-branch/,https://coopbankoromia.com.et/about/"
+)
+WEBSITE_CACHE_TTL = int(os.getenv("WEBSITE_CACHE_TTL", "3600"))
 
-# --- CORS Middleware for Flutter Web ---
+app = FastAPI(title="GamtaaAPP - AI Backend (Coopbank)")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace "*" with your frontend URL in production
+    allow_origins=["*"],  # tighten for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---- Replace these with your full long contexts as needed ----
 MICHU_CONTEXT = """Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
 
 Welcome to Michu, the digital lending platform that understands your business needs and supports your growth. Whether you’re a small vendor, an aspiring entrepreneur, or an established MSME, Michu is here to help you thrive. Say goodbye to collateral requirements and long approval processes with Michu, your financing is just a few taps away.
@@ -106,6 +120,7 @@ Privacy Policy
 
 Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
 """
+
 COOPBANK_CONTEXT = """
 Cooperative Bank of Oromia Banking Solutions
 
@@ -161,43 +176,114 @@ Other Financings:
 - Equipment/machinery Lease Financing
 - Import Letter of Credit Settlement Loan
 """
+# ---------------------------------------------------------------
+
 class ChatRequest(BaseModel):
     messages: list  # [{"role": "user", "content": "Hello"}]
+    extra_urls: Optional[List[str]] = None
+
+website_cache = TTLCache(maxsize=256, ttl=WEBSITE_CACHE_TTL)
+
+HEADERS = {
+    "User-Agent": "GamtaaAPP-AI-Backend/1.0 (+https://gamtaaapp.local/)",
+}
+
+def extract_text_from_html(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
+        tag.decompose()
+    main = soup.find("main") or soup.find("article") or soup.body or soup
+    text = main.get_text(separator="\n", strip=True)
+    max_chars = 20_000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n[truncated]"
+    return text
+
+@cached(website_cache)
+def fetch_site_text(url: str, timeout: int = 8) -> str:
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        resp.raise_for_status()
+        return extract_text_from_html(resp.text)
+    except Exception:
+        return ""
+
+def gather_web_context(urls: List[str]) -> str:
+    pieces = []
+    for u in urls:
+        parsed = urlparse(u)
+        if parsed.scheme == "":
+            u = "https://" + u
+        if parsed.hostname and parsed.hostname.startswith(("127.", "localhost", "192.", "10.", "172.")):
+            continue
+        text = fetch_site_text(u)
+        if not text:
+            continue
+        snippet = text[:2000]
+        pieces.append(f"Source: {u}\n{snippet}\n---")
+        time.sleep(0.2)
+    if not pieces:
+        return ""
+    return "\n".join(pieces)
 
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
+    env_urls = [s.strip() for s in EXTRA_SOURCES.split(",") if s.strip()]
+    request_urls = request.extra_urls or []
+    combined_urls = []
+    for u in request_urls + env_urls:
+        if u not in combined_urls:
+            combined_urls.append(u)
+
+    web_context = gather_web_context(combined_urls) if combined_urls else ""
+
+    system_content = (
+        "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
+        "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
+        "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
+        "Keep responses short and easy to read.\n\n"
+        "Static Context (Coopbank + Michu):\n"
+        f"{MICHU_CONTEXT}\n\n"
+        f"{COOPBANK_CONTEXT}\n\n"
+    )
+
+    if web_context:
+        system_content += "Augmented with short extracts from external websites (for factual freshness):\n" + web_context + "\n\n"
+
+    system_context = {"role": "system", "content": system_content}
+    messages_with_context = [system_context] + request.messages
+
+    payload = {
+        "model": "openai/gpt-oss-20b:groq",
+        "messages": messages_with_context,
+    }
+
     url = "https://router.huggingface.co/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    # Inject Michu context as system prompt
-    system_context = {
-        "role": "system",
-        "content": (
-            "You are an assistant that knows everything about both the Michu Digital Lending Platform "
-            "and the Cooperative Bank of Oromia banking solutions. "
-            "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
-            "Make responses short and easy to read.\n\n"
-            "Context:\n"
-            f"{MICHU_CONTEXT}\n\n"
-            f"{COOPBANK_CONTEXT}"
-        )
-    }
-
-    # Prepend system context to messages
-    messages_with_context = [system_context] + request.messages
-
-    payload = {
-        "model": "openai/gpt-oss-20b:groq",
-        "messages": messages_with_context
-    }
-
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
         return response.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Small helper endpoint to test extraction quickly
+class URLRequest(BaseModel):
+    url: str
+
+@app.post("/extract")
+def extract_endpoint(req: URLRequest):
+    url = req.url
+    parsed = urlparse(url)
+    if parsed.scheme == "":
+        url = "https://" + url
+    text = fetch_site_text(url)
+    if not text:
+        raise HTTPException(status_code=404, detail="Could not fetch or extract content from the URL.")
+    # return a short snippet for quick verification
+    return {"url": url, "snippet": text[:2000]}
