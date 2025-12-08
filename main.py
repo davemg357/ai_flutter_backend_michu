@@ -106,7 +106,61 @@ Privacy Policy
 
 Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
 """
+COOPBANK_CONTEXT = """
+Cooperative Bank of Oromia Banking Solutions
 
+Digital Offerings:
+COOPay-Ebirr
+Card Banking
+CoopApp
+CoopApp Alhuda
+Farmpass
+Coopbank SACCO-Link
+
+Deposit Products:
+Demand Deposit
+Saving Deposit
+Fixed Time Deposit
+
+Trade Service:
+Import
+Export
+Money Transfers
+Guarantee (Foreign)
+
+Agri and Cooperative Relations:
+Cooperatives Saving Products:
+- Cooperative Saving
+- Requirements
+
+Cooperative Financing:
+- Working Capital Loan
+- Agriculture Mechanization
+- Agriculture Processing
+- Export Financing Facilities
+- Others
+
+Cooperatives Capacity Building and Advisory:
+- Capacity Building and Advisory Services
+- Intended Impact of Coopbank’s Advisory Services
+- Stakeholders to Partner with Coopbank
+
+Loan and Advances:
+- Collateralized Commodity Financing (CCF)
+- Overdraft Facility
+- Merchandise Loan Facility
+- Pre-shipment Export Credit Facility
+- Letter of Guarantee Facility
+- Term Loan
+- Agricultural Term Loan
+- Motor Vehicle Loan
+- Revolving Export Credit Facility
+
+Other Financings:
+- Partial Financing for Acquired and Foreclosed Collateral
+- Equipment/machinery Lease Financing
+- Import Letter of Credit Settlement Loan
+"""
 class ChatRequest(BaseModel):
     messages: list  # [{"role": "user", "content": "Hello"}]
 
@@ -122,10 +176,13 @@ def chat_endpoint(request: ChatRequest):
     system_context = {
         "role": "system",
         "content": (
-            "You are an assistant that knows everything about the Michu digital lending platform. "
+            "You are an assistant that knows everything about both the Michu Digital Lending Platform "
+            "and the Cooperative Bank of Oromia banking solutions. "
             "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
-            "Make it short and easy to read.\n\n"
-            f"Context:\n{MICHU_CONTEXT}"
+            "Make responses short and easy to read.\n\n"
+            "Context:\n"
+            f"{MICHU_CONTEXT}\n\n"
+            f"{COOPBANK_CONTEXT}"
         )
     }
 
