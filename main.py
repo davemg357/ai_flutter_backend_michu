@@ -120,7 +120,6 @@ Privacy Policy
 
 Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
 """
-
 COOPBANK_CONTEXT = """
 Cooperative Bank of Oromia Banking Solutions
 
@@ -214,30 +213,75 @@ def gather_web_context(urls: List[str]) -> str:
         parsed = urlparse(u)
         if parsed.scheme == "":
             u = "https://" + u
-        if parsed.hostname and parsed.hostname.startswith(("127.", "localhost", "192.", "10.", "172.")):
+            parsed = urlparse(u)
+        # basic safety: avoid local addresses
+        hostname = parsed.hostname or ""
+        if hostname.startswith(("127.", "localhost", "192.", "10.", "172.")):
             continue
         text = fetch_site_text(u)
         if not text:
             continue
         snippet = text[:2000]
         pieces.append(f"Source: {u}\n{snippet}\n---")
-        time.sleep(0.2)
+        time.sleep(0.15)
     if not pieces:
         return ""
     return "\n".join(pieces)
 
+def call_hf_api(messages: List[dict], timeout: int = 30) -> dict:
+    """Call the HuggingFace router and return parsed json (raises on non-200)."""
+    url = "https://router.huggingface.co/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "openai/gpt-oss-20b:groq",
+        "messages": messages,
+    }
+    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+def extract_content_from_hf_response(hf_json: dict) -> str:
+    """Defensive extractor for the assistant text content."""
+    try:
+        return hf_json['choices'][0]['message']['content'] or ""
+    except Exception:
+        # Fallback: return stringified body
+        return str(hf_json)
+
+def response_is_uncertain(text: str) -> bool:
+    """Heuristic: detect model uncertainty or 'no local info' phrasing."""
+    if not text:
+        return True
+    lower = text.lower()
+    uncertain_phrases = [
+        "i don't have", "i'm not sure", "i do not have", "i could not find",
+        "i cannot find", "no information", "i don't know", "i'm unable to",
+        "can't find", "not enough information", "i'm not aware"
+    ]
+    # If any of these phrases present, treat as uncertain
+    for p in uncertain_phrases:
+        if p in lower:
+            return True
+    return False
+
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
+    # Build URL list: per-request extra_urls then env extras
     env_urls = [s.strip() for s in EXTRA_SOURCES.split(",") if s.strip()]
     request_urls = request.extra_urls or []
     combined_urls = []
     for u in request_urls + env_urls:
-        if u not in combined_urls:
+        if u and u not in combined_urls:
             combined_urls.append(u)
 
     web_context = gather_web_context(combined_urls) if combined_urls else ""
 
-    system_content = (
+    # Primary system prompt: prefer static + web contexts
+    system_content_primary = (
         "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
         "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
         "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
@@ -248,29 +292,63 @@ def chat_endpoint(request: ChatRequest):
     )
 
     if web_context:
-        system_content += "Augmented with short extracts from external websites (for factual freshness):\n" + web_context + "\n\n"
+        system_content_primary += (
+            "Augmented with short extracts from external websites (for factual freshness):\n"
+            + web_context + "\n\n"
+        )
 
-    system_context = {"role": "system", "content": system_content}
-    messages_with_context = [system_context] + request.messages
+    system_ctx_primary = {"role": "system", "content": system_content_primary}
+    messages_with_context = [system_ctx_primary] + request.messages
 
-    payload = {
-        "model": "openai/gpt-oss-20b:groq",
-        "messages": messages_with_context,
-    }
-
-    url = "https://router.huggingface.co/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/json"
-    }
-
+    # First attempt: ask model using the contexts
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        return response.json()
+        hf_resp_primary = call_hf_api(messages_with_context)
+    except HTTPException as e:
+        # If HF failed (network / auth), bubble up useful info
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    answer_primary = extract_content_from_hf_response(hf_resp_primary)
+
+    # If primary answer looks uncertain (i.e., model couldn't find targeted info),
+    # call a fallback prompt that allows the model to answer from general knowledge.
+    if response_is_uncertain(answer_primary):
+        # Build a fallback system prompt that explicitly allows using general knowledge
+        system_content_fallback = (
+            "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
+            "If you cannot answer the user's question from the provided Coopbank/Michu context or scraped websites, "
+            "use your general world knowledge to answer the question. When using general knowledge (i.e., not bank-provided or scraped info), "
+            "clearly label the response as general information and avoid inventing private/internal bank facts. "
+            "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
+            "Keep responses short and easy to read.\n\n"
+            "Static Context (Coopbank + Michu):\n"
+            f"{MICHU_CONTEXT}\n\n"
+            f"{COOPBANK_CONTEXT}\n\n"
+        )
+
+        # NOTE: we intentionally do not include web_context in the fallback system prompt
+        # so the model primarily uses its general knowledge if it couldn't find anything above.
+        system_ctx_fallback = {"role": "system", "content": system_content_fallback}
+        messages_fallback = [system_ctx_fallback] + request.messages
+
+        try:
+            hf_resp_fallback = call_hf_api(messages_fallback)
+            answer_fallback = extract_content_from_hf_response(hf_resp_fallback)
+            # If fallback still uncertain, return primary (whatever it was) — else return fallback
+            if response_is_uncertain(answer_fallback):
+                # prefer the more complete (non-empty) one if available
+                return {"from": "primary", "answer": answer_primary}
+            else:
+                return {"from": "general_knowledge_fallback", "answer": answer_fallback}
+        except HTTPException as e:
+            # Return the primary answer if fallback failed due to service error
+            return {"from": "primary_with_hf_error_on_fallback", "answer": answer_primary, "hf_error": str(e.detail)}
+        except Exception as e:
+            return {"from": "primary_with_fallback_exception", "answer": answer_primary, "error": str(e)}
+    else:
+        # Primary answer was OK — return it
+        return {"from": "primary", "answer": answer_primary}
 
 # Small helper endpoint to test extraction quickly
 class URLRequest(BaseModel):
