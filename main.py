@@ -1,6 +1,7 @@
 # main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import os
 import requests
@@ -10,11 +11,11 @@ import time
 from cachetools import TTLCache, cached
 from typing import List, Optional
 from urllib.parse import urlparse
+import re
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Default external sources (feel free to change to coopbank/gamtaa domains)
 EXTRA_SOURCES = os.getenv(
     "EXTRA_SOURCES",
     "https://coopbankoromia.com.et/,https://coopbankoromia.com.et/our-digital-offerings/,https://coopbankoromia.com.et/coopbank-smart-branch/,https://coopbankoromia.com.et/about/"
@@ -31,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- Replace these with your full long contexts as needed ----
+# ---- Static contexts ----
 MICHU_CONTEXT = """Michu Loan: Empowering Ethiopian MSMEs Through Digital Lending
 
 Welcome to Michu, the digital lending platform that understands your business needs and supports your growth. Whether you’re a small vendor, an aspiring entrepreneur, or an established MSME, Michu is here to help you thrive. Say goodbye to collateral requirements and long approval processes with Michu, your financing is just a few taps away.
@@ -119,7 +120,7 @@ Repaying your loan on time increases your eligible loan amount for future applic
 Privacy Policy
 
 Michu operates strictly within all regulatory frameworks, ensuring a safe and secure lending experience for our customers.
-"""
+""" # truncated, keep original full text
 
 COOPBANK_CONTEXT = """
 Cooperative Bank of Oromia Banking Solutions
@@ -170,23 +171,13 @@ Loan and Advances:
 - Agricultural Term Loan
 - Motor Vehicle Loan
 - Revolving Export Credit Facility
-
-Other Financings:
-- Partial Financing for Acquired and Foreclosed Collateral
-- Equipment/machinery Lease Financing
-- Import Letter of Credit Settlement Loan
 """
-# ---------------------------------------------------------------
+# -------------------- Helpers --------------------
+INVISIBLE_CHARS = re.compile(r'[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]')
 
-class ChatRequest(BaseModel):
-    messages: list  # [{"role": "user", "content": "Hello"}]
-    extra_urls: Optional[List[str]] = None
-
-website_cache = TTLCache(maxsize=256, ttl=WEBSITE_CACHE_TTL)
-
-HEADERS = {
-    "User-Agent": "GamtaaAPP-AI-Backend/1.0 (+https://gamtaaapp.local/)",
-}
+def clean_text(text: str) -> str:
+    """Remove invisible Unicode characters"""
+    return INVISIBLE_CHARS.sub('', text).strip()
 
 def extract_text_from_html(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
@@ -197,12 +188,19 @@ def extract_text_from_html(html: str) -> str:
     max_chars = 20_000
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[truncated]"
-    return text
+    return clean_text(text)  # clean here too
+
+HEADERS = {
+    "User-Agent": "GamtaaAPP-AI-Backend/1.0 (+https://gamtaaapp.local/)",
+}
+
+website_cache = TTLCache(maxsize=256, ttl=WEBSITE_CACHE_TTL)
 
 @cached(website_cache)
 def fetch_site_text(url: str, timeout: int = 8) -> str:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        resp.encoding = "utf-8"  # force UTF-8
         resp.raise_for_status()
         return extract_text_from_html(resp.text)
     except Exception:
@@ -226,6 +224,15 @@ def gather_web_context(urls: List[str]) -> str:
         return ""
     return "\n".join(pieces)
 
+# -------------------- Request models --------------------
+class ChatRequest(BaseModel):
+    messages: list  # [{"role": "user", "content": "Hello"}]
+    extra_urls: Optional[List[str]] = None
+
+class URLRequest(BaseModel):
+    url: str
+
+# -------------------- Endpoints --------------------
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
     env_urls = [s.strip() for s in EXTRA_SOURCES.split(",") if s.strip()]
@@ -238,20 +245,19 @@ def chat_endpoint(request: ChatRequest):
     web_context = gather_web_context(combined_urls) if combined_urls else ""
 
     system_content = (
-    "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
-    "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
-    "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or no any type of symbols.  "
-    "Keep responses short and easy to read.\n\n"
-    "Static Context (Coopbank + Michu):\n"
-    f"{MICHU_CONTEXT}\n\n"
-    f"{COOPBANK_CONTEXT}\n\n"
-    "Use extracts from external websites (if available) to provide updated information.\n"
-    "If the user query is not covered in any of the above contexts, answer using your general AI knowledge, "
-    "while maintaining accuracy and clarity relevant to Ethiopian banking and fintech.\n"
+        "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
+        "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
+        "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or any type of symbols. "
+        "Do not repeat website text verbatim. Rewrite everything in clean plain ASCII/Unicode text only. "
+        "Keep responses short and easy to read.\n\n"
+        f"Static Context (Coopbank + Michu):\n{MICHU_CONTEXT}\n{COOPBANK_CONTEXT}\n"
+        "Use extracts from external websites (if available) to provide updated information.\n"
+        "If the user query is not covered in any of the above contexts, answer using your general AI knowledge, "
+        "while maintaining accuracy and clarity relevant to Ethiopian banking and fintech.\n"
     )
 
     if web_context:
-        system_content += "Augmented with short extracts from external websites (for factual freshness):\n" + web_context + "\n\n"
+        system_content += "Augmented with short extracts from external websites:\n" + web_context + "\n\n"
 
     system_context = {"role": "system", "content": system_content}
     messages_with_context = [system_context] + request.messages
@@ -269,15 +275,22 @@ def chat_endpoint(request: ChatRequest):
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        return response.json()
+        response.raise_for_status()
+        data = response.json()
+
+        # Clean AI response
+        try:
+            content = data["choices"][0]["message"]["content"]
+            data["choices"][0]["message"]["content"] = clean_text(content)
+        except Exception:
+            pass
+
+        return JSONResponse(
+            content=data,
+            media_type="application/json; charset=utf-8"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# Small helper endpoint to test extraction quickly
-class URLRequest(BaseModel):
-    url: str
 
 @app.post("/extract")
 def extract_endpoint(req: URLRequest):
@@ -288,5 +301,4 @@ def extract_endpoint(req: URLRequest):
     text = fetch_site_text(url)
     if not text:
         raise HTTPException(status_code=404, detail="Could not fetch or extract content from the URL.")
-    # return a short snippet for quick verification
     return {"url": url, "snippet": text[:2000]}
