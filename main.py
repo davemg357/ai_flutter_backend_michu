@@ -240,7 +240,7 @@ def chat_endpoint(request: ChatRequest):
     system_content = (
     "You are an assistant for gamtaaAPP — the Cooperative Bank of Oromia's mobile super-app. "
     "Michu (Michu Loan) is a lending product offered by Cooperative Bank of Oromia and is available inside gamtaaAPP. "
-    "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or symbols. "
+    "Answer clearly and concisely in plain text only. Do not use emojis, tables, markdown, or no any type of symbols.  "
     "Keep responses short and easy to read.\n\n"
     "Static Context (Coopbank + Michu):\n"
     f"{MICHU_CONTEXT}\n\n"
